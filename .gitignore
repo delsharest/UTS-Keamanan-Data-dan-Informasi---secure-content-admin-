@@ -1,0 +1,3 @@
+/config/local.php
+/storage/keys/*.pem
+!/storage/keys/.gitkeep
