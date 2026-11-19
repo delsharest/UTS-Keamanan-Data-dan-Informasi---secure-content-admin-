@@ -12,7 +12,7 @@
 
 ## 1. Deskripsi Program
 
-Aplikasi Secure Content Admin merupakan sistem informasi berbasis web yang digunakan untuk mengelola konten atau informasi melalui halaman administrator. Aplikasi menyediakan proses login serta fitur untuk menambah, melihat, mengubah, dan menghapus konten. Untuk menjaga kerahasiaan informasi, judul dan isi konten tidak disimpan sebagai teks biasa, melainkan dienkripsi sebelum dimasukkan ke database.
+Aplikasi Secure Content Admin merupakan sistem informasi berbasis web yang digunakan untuk mengelola konten atau informasi melalui halaman administrator. Aplikasi menyediakan landing page yang menjelaskan konsep kriptografi, halaman akses menggunakan private key RSA, serta dashboard untuk menambah, melihat, mengubah, dan menghapus konten ketika private key yang benar digunakan. Untuk menjaga kerahasiaan informasi, judul dan isi konten tidak disimpan sebagai teks biasa, melainkan dienkripsi sebelum dimasukkan ke database.
 
 Aplikasi menerapkan metode hybrid encryption, yaitu menggabungkan kriptografi simetris AES-256-GCM dan kriptografi asimetris RSA-2048 dengan padding OAEP. AES digunakan untuk mengenkripsi data konten, sedangkan RSA digunakan untuk melindungi kunci AES. Dengan demikian, sistem menggunakan dua pendekatan kriptografi yang saling melengkapi.
 
@@ -27,12 +27,13 @@ Aplikasi menerapkan metode hybrid encryption, yaitu menggabungkan kriptografi si
 
 | No. | Fungsi | Keterangan |
 |---|---|---|
-| 1 | Login admin | Memeriksa username dan password sebelum memberikan akses ke halaman admin. Password disimpan dalam bentuk hash. |
-| 2 | Tambah konten | Menerima judul dan isi informasi, kemudian mengenkripsinya sebelum disimpan ke database. |
-| 3 | Tampilkan konten | Mengambil data terenkripsi dan menampilkan hasil dekripsi kepada admin yang telah login. |
-| 4 | Edit konten | Membuka data menggunakan private key dan kunci AES, kemudian mengenkripsi kembali data setelah diperbarui. |
-| 5 | Hapus konten | Menghapus data konten berdasarkan ID melalui permintaan POST yang dilindungi token CSRF. |
-| 6 | Enkripsi hybrid | Menggunakan AES-256-GCM untuk data dan RSA-OAEP untuk melindungi kunci AES. |
+| 1 | Landing page | Menjelaskan konsep kriptografi, plaintext, ciphertext, AES-256-GCM, dan RSA-2048 sebelum pengguna membuka halaman akses. |
+| 2 | Akses private key | Menerima private key dalam format PEM dan memeriksa apakah kunci tersebut berpasangan dengan public key aplikasi. |
+| 3 | Dashboard mode dekripsi | Jika private key benar, konten didekripsi dan ditampilkan dalam bentuk aslinya. |
+| 4 | Dashboard mode ciphertext | Jika private key salah, pengguna tetap dapat membuka dashboard. Seluruh tulisan antarmuka (judul, menu, status, label algoritma, angka ringkasan, notifikasi, dan footer) serta isi konten ditampilkan sebagai ciphertext. Fitur CRUD menjadi read-only. |
+| 5 | Tambah konten | Menerima judul dan isi informasi, kemudian mengenkripsinya sebelum disimpan ke database. |
+| 6 | Edit dan hapus konten | Hanya tersedia pada mode dekripsi setelah private key dinyatakan cocok. |
+| 7 | Enkripsi hybrid | Menggunakan AES-256-GCM untuk data dan RSA-OAEP untuk melindungi kunci AES. |
 
 ## 4. Teknologi dan Algoritma
 
@@ -41,7 +42,7 @@ Aplikasi menerapkan metode hybrid encryption, yaitu menggabungkan kriptografi si
 - Library kriptografi: OpenSSL bawaan PHP.
 - Kriptografi simetris: AES-256-GCM dengan kunci 256-bit dan IV acak.
 - Kriptografi asimetris: RSA-2048 dengan padding OAEP.
-- Autentikasi: `password_hash()` dan `password_verify()`.
+- Pemeriksaan akses: validasi private key PEM terhadap public key yang dikonfigurasi.
 
 ### 4.1 Kriptografi Simetris AES-256-GCM
 
@@ -53,14 +54,16 @@ Kriptografi asimetris menggunakan sepasang kunci, yaitu public key dan private k
 
 ## 5. Alur Kerja Sistem
 
-1. Administrator melakukan login menggunakan akun yang telah terdaftar.
-2. Administrator memasukkan judul dan isi konten melalui halaman tambah konten.
-3. Sistem membuat kunci AES acak dan IV untuk konten tersebut.
-4. Sistem mengenkripsi judul dan isi menggunakan AES-256-GCM.
-5. Sistem mengenkripsi kunci AES menggunakan public key RSA.
-6. Database menyimpan ciphertext, IV, authentication tag, dan kunci AES yang telah dienkripsi RSA.
-7. Saat konten ditampilkan kepada administrator yang telah terautentikasi, server menggunakan private key RSA untuk memperoleh kunci AES.
-8. Server menggunakan kunci AES untuk mendekripsi konten sehingga informasi dapat dibaca kembali oleh administrator.
+1. Pengunjung membuka landing page yang berisi pengenalan kriptografi dan teknologi yang digunakan.
+2. Pengunjung memilih tombol masuk dan menempelkan seluruh isi file `private.pem` pada form private key.
+3. Sistem memeriksa apakah private key tersebut cocok dengan public key aplikasi.
+4. Jika private key benar, sistem mengaktifkan mode dekripsi. Jika salah, sistem tetap membuka dashboard dalam mode ciphertext.
+5. Pada mode dekripsi, administrator memasukkan judul dan isi konten melalui form tambah konten.
+6. Sistem membuat kunci AES acak dan IV baru, kemudian mengenkripsi judul dan isi dengan AES-256-GCM.
+7. Sistem mengenkripsi kunci AES menggunakan public key RSA. Database menyimpan ciphertext, IV, authentication tag, encrypted key, dan versi kriptografi.
+8. Jika dashboard dibuka dengan private key yang benar, private key RSA membuka encrypted key, lalu kunci AES mendekripsi konten.
+9. Jika dashboard dibuka dengan private key salah, judul dan isi asli tidak ditampilkan. Seluruh teks antarmuka dashboard juga dienkripsi sementara menggunakan AES-256-GCM dengan kunci AES yang dibungkus public key RSA. Oleh karena itu, label dashboard, status, angka ringkasan, nama algoritma, pesan, simbol teks, dan footer ditampilkan sebagai ciphertext. Konten database ditampilkan sebagai ciphertext dan komponen hasil enkripsi. Fitur tambah, edit, dan hapus tidak tersedia pada mode ini.
+10. Saat pengguna keluar, sesi diakhiri dan private key yang disimpan sementara dalam sesi server-side dihapus.
 
 ## 6. Hasil dan Pengujian
 
@@ -68,13 +71,14 @@ Pengujian aplikasi dilakukan melalui beberapa skenario berikut. Kolom hasil aktu
 
 | No. | Skenario pengujian | Hasil yang diharapkan | Hasil aktual |
 |---|---|---|---|
-| 1 | Login menggunakan akun admin yang benar | Admin berhasil masuk ke dashboard | [Isi setelah pengujian] |
-| 2 | Login menggunakan password yang salah | Sistem menolak akses | [Isi setelah pengujian] |
-| 3 | Menambahkan konten | Konten dienkripsi sebelum tersimpan di database | [Isi setelah pengujian] |
-| 4 | Memeriksa isi tabel `contents` | Judul dan isi tidak terlihat sebagai teks biasa | [Isi setelah pengujian] |
-| 5 | Membuka dashboard setelah login | Konten berhasil didekripsi dan ditampilkan | [Isi setelah pengujian] |
-| 6 | Mengubah konten | Data baru dienkripsi kembali sebelum disimpan | [Isi setelah pengujian] |
-| 7 | Menghapus konten | Data terpilih terhapus dari database | [Isi setelah pengujian] |
+| 1 | Membuka alamat aplikasi tanpa login | Landing page tampil sebelum halaman akses | [Isi setelah pengujian] |
+| 2 | Membuka form akses private key | Form menerima private key PEM, bukan username/password | [Isi setelah pengujian] |
+| 3 | Memasukkan private key yang benar | Dashboard terbuka dalam mode dekripsi dan konten asli dapat dibaca | [Isi setelah pengujian] |
+| 4 | Memasukkan private key yang salah | Dashboard tetap terbuka dalam mode ciphertext; isi konten dan seluruh tulisan antarmuka dashboard ditampilkan sebagai ciphertext | [Isi setelah pengujian] |
+| 5 | Memeriksa tabel `contents` di database | Judul dan isi tersimpan sebagai ciphertext; encrypted key, IV, dan authentication tag tersedia | [Isi setelah pengujian] |
+| 6 | Menambah konten pada mode dekripsi | Konten dienkripsi sebelum disimpan ke database | [Isi setelah pengujian] |
+| 7 | Mengakses fitur CRUD pada mode ciphertext | Tambah, edit, dan hapus tidak tersedia | [Isi setelah pengujian] |
+| 8 | Logout dan membuka dashboard kembali | Sesi berakhir dan pengguna kembali ke landing page | [Isi setelah pengujian] |
 
 **Bukti pengujian yang disarankan:** tangkapan layar halaman login, dashboard, form tambah konten, konten setelah tampil, dan isi tabel `contents` di phpMyAdmin yang memperlihatkan nilai ciphertext/base64, bukan judul atau isi asli.
 
@@ -90,11 +94,11 @@ File utama yang dapat diperiksa:
 - `public/index.php` — halaman login, dashboard, dan proses CRUD konten.
 - `database/schema.sql` — struktur database.
 - `scripts/generate_keys.php` — pembuatan pasangan kunci RSA.
-- `scripts/create_admin.php` — pembuatan akun administrator.
+- `app/bootstrap.php` — pengaturan sesi, pemeriksaan akses berdasarkan private key, serta enkripsi/dekripsi teks antarmuka dashboard sesuai mode akses.
 
 ## 8. Kesimpulan
 
-Berdasarkan rancangan aplikasi, sistem informasi pengelolaan konten admin ini menerapkan kriptografi simetris dan asimetris secara bersamaan. AES-256-GCM digunakan untuk mengenkripsi judul dan isi konten, sedangkan RSA digunakan untuk melindungi kunci AES agar tidak disimpan secara langsung di database. Penerapan kedua algoritma tersebut membuat data konten tersimpan dalam bentuk ciphertext dan hanya dapat dibaca kembali melalui proses dekripsi menggunakan kunci yang sesuai. Aplikasi ini juga menyediakan autentikasi admin dan fungsi pengelolaan konten sehingga dapat digunakan sebagai contoh penerapan kriptografi pada sistem informasi berbasis PHP.
+Berdasarkan implementasi dan hasil pengujian yang dilengkapi, sistem informasi pengelolaan konten admin ini menerapkan kriptografi simetris dan asimetris secara bersamaan serta menyediakan landing page dan dua mode dashboard berdasarkan kecocokan private key. AES-256-GCM digunakan untuk mengenkripsi judul dan isi konten, sedangkan RSA digunakan untuk melindungi kunci AES agar tidak disimpan secara langsung di database. Penerapan kedua algoritma tersebut membuat data konten tersimpan dalam bentuk ciphertext dan hanya dapat dibaca kembali melalui proses dekripsi menggunakan kunci yang sesuai. Aplikasi juga menampilkan ciphertext untuk isi konten dan seluruh teks antarmuka dashboard ketika private key yang dimasukkan tidak cocok, sedangkan fitur pengelolaan konten hanya diaktifkan pada mode dekripsi. Pada implementasi tugas ini, private key dikirim ke aplikasi PHP dan disimpan sementara pada sesi server-side; karena itu aplikasi ditujukan untuk demonstrasi lokal dan bukan implementasi end-to-end encryption.
 
 ---
 

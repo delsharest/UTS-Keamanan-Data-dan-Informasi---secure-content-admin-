@@ -34,13 +34,27 @@ function redirect(string $url): never
 
 function is_logged_in(): bool
 {
-    return isset($_SESSION['admin_id']);
+    return !empty($_SESSION['access_granted']);
+}
+
+function can_decrypt(): bool
+{
+    return is_logged_in() && !empty($_SESSION['can_decrypt']) && is_string($_SESSION['private_key_pem'] ?? null);
 }
 
 function require_login(): void
 {
     if (!is_logged_in()) {
         redirect('index.php?page=login');
+    }
+}
+
+function require_decryption(): void
+{
+    require_login();
+    if (!can_decrypt()) {
+        set_flash('error', 'Fitur pengelolaan konten hanya tersedia ketika private key yang benar digunakan. Dashboard tetap dapat dibuka dalam mode ciphertext.');
+        redirect('index.php');
     }
 }
 
@@ -86,7 +100,54 @@ function crypto_service(): CryptoService
     global $config;
     return new CryptoService(
         $config['public_key_path'],
-        $config['private_key_path'],
         $config['private_key_passphrase']
     );
+}
+
+/**
+ * Render every dashboard label through the same hybrid cryptography flow.
+ * With a matching private key the temporary label payload is decrypted and
+ * displayed normally. Without a matching key only its AES-GCM ciphertext is
+ * returned to the browser. The temporary encrypted key is never exposed.
+ */
+function ui_text_value(string $plainText): string
+{
+    static $cache = [];
+
+    // Landing and login pages remain readable before an access session exists.
+    if (!is_logged_in()) {
+        return $plainText;
+    }
+
+    if (array_key_exists($plainText, $cache)) {
+        return $cache[$plainText];
+    }
+
+    $encrypted = crypto_service()->encrypt(['ui_text' => $plainText]);
+
+    if (can_decrypt()) {
+        $decrypted = crypto_service()->decrypt($encrypted, $_SESSION['private_key_pem']);
+        $value = $decrypted['ui_text'] ?? null;
+        if (!is_string($value)) {
+            throw new RuntimeException('Label dashboard tidak dapat didekripsi.');
+        }
+    } else {
+        $value = $encrypted['ciphertext'];
+    }
+
+    $cache[$plainText] = $value;
+    return $value;
+}
+
+/** Safe HTML text node: ciphertext mode is visually styled as encoded text. */
+function ui_text(string $plainText): string
+{
+    $value = e(ui_text_value($plainText));
+    return (!is_logged_in() || can_decrypt()) ? $value : '<span class="cipher-ui-text">' . $value . '</span>';
+}
+
+/** Safe HTML attribute value, including the browser tab title. */
+function ui_attr(string $plainText): string
+{
+    return e(ui_text_value($plainText));
 }

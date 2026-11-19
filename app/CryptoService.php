@@ -1,9 +1,9 @@
 <?php
 
 /**
- * Hybrid encryption service:
- * - AES-256-GCM encrypts the actual content.
- * - RSA-OAEP encrypts (wraps) the random AES key.
+ * Hybrid encryption service.
+ * - AES-256-GCM encrypts the title and body as one JSON payload.
+ * - RSA-2048 OAEP wraps the random AES key.
  */
 final class CryptoService
 {
@@ -13,21 +13,55 @@ final class CryptoService
     private const TAG_LENGTH = 16;
 
     private string $publicKeyPath;
-    private string $privateKeyPath;
     private ?string $privateKeyPassphrase;
 
-    public function __construct(string $publicKeyPath, string $privateKeyPath, ?string $privateKeyPassphrase)
+    public function __construct(string $publicKeyPath, ?string $privateKeyPassphrase)
     {
         $this->publicKeyPath = $publicKeyPath;
-        $this->privateKeyPath = $privateKeyPath;
         $this->privateKeyPassphrase = $privateKeyPassphrase;
+    }
+
+    /**
+     * Check whether a submitted PEM private key is the pair of the configured public key.
+     * The private key file itself is not read here; the key entered on the login page is checked.
+     */
+    public function privateKeyMatchesPublicKey(string $privateKeyPem): bool
+    {
+        if (trim($privateKeyPem) === '' || !is_file($this->publicKeyPath)) {
+            return false;
+        }
+
+        $privateKey = @openssl_pkey_get_private(
+            $privateKeyPem,
+            $this->privateKeyPassphrase ?? ''
+        );
+        if ($privateKey === false) {
+            return false;
+        }
+
+        $publicKey = $this->loadPublicKey();
+        $privateDetails = openssl_pkey_get_details($privateKey);
+        $publicDetails = openssl_pkey_get_details($publicKey);
+
+        if (!is_array($privateDetails) || !is_array($publicDetails)) {
+            return false;
+        }
+
+        $privateRsa = $privateDetails['rsa'] ?? [];
+        $publicRsa = $publicDetails['rsa'] ?? [];
+        if (!isset($privateRsa['n'], $privateRsa['e'], $publicRsa['n'], $publicRsa['e'])) {
+            return false;
+        }
+
+        return hash_equals($publicRsa['n'], $privateRsa['n'])
+            && hash_equals($publicRsa['e'], $privateRsa['e']);
     }
 
     /** @return array{encrypted_key:string,iv:string,auth_tag:string,ciphertext:string,crypto_version:string} */
     public function encrypt(array $content): array
     {
         $publicKey = $this->loadPublicKey();
-        $aesKey = random_bytes(32); // 256-bit key baru untuk setiap konten.
+        $aesKey = random_bytes(32);
         $iv = random_bytes(self::IV_LENGTH);
         $plaintext = json_encode($content, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
         $tag = '';
@@ -62,9 +96,16 @@ final class CryptoService
     }
 
     /** @return array<string,mixed> */
-    public function decrypt(array $record): array
+    public function decrypt(array $record, string $privateKeyPem): array
     {
-        $privateKey = $this->loadPrivateKey();
+        $privateKey = @openssl_pkey_get_private(
+            $privateKeyPem,
+            $this->privateKeyPassphrase ?? ''
+        );
+        if ($privateKey === false) {
+            throw new RuntimeException('Private key yang dimasukkan tidak dapat dibuka.');
+        }
+
         $wrappedKey = $this->decodeField($record['encrypted_key'] ?? '', 'kunci terenkripsi');
         $iv = $this->decodeField($record['iv'] ?? '', 'IV');
         $tag = $this->decodeField($record['auth_tag'] ?? '', 'authentication tag');
@@ -72,7 +113,7 @@ final class CryptoService
 
         $aesKey = '';
         if (!openssl_private_decrypt($wrappedKey, $aesKey, $privateKey, OPENSSL_PKCS1_OAEP_PADDING)) {
-            throw new RuntimeException('Kunci AES tidak dapat dibuka. Pasangan kunci mungkin tidak cocok.');
+            throw new RuntimeException('Kunci AES tidak dapat dibuka. Private key tidak cocok.');
         }
 
         $plaintext = openssl_decrypt(
@@ -102,25 +143,12 @@ final class CryptoService
         if (!is_file($this->publicKeyPath)) {
             throw new RuntimeException('Public key belum tersedia. Jalankan scripts/generate_keys.php terlebih dahulu.');
         }
+
         $key = openssl_pkey_get_public(file_get_contents($this->publicKeyPath));
         if ($key === false) {
             throw new RuntimeException('Public key tidak dapat dibaca.');
         }
-        return $key;
-    }
 
-    private function loadPrivateKey()
-    {
-        if (!is_file($this->privateKeyPath)) {
-            throw new RuntimeException('Private key belum tersedia. Jalankan scripts/generate_keys.php terlebih dahulu.');
-        }
-        $key = openssl_pkey_get_private(
-            file_get_contents($this->privateKeyPath),
-            $this->privateKeyPassphrase ?? ''
-        );
-        if ($key === false) {
-            throw new RuntimeException('Private key tidak dapat dibuka. Periksa passphrase di config/local.php.');
-        }
         return $key;
     }
 
@@ -130,6 +158,7 @@ final class CryptoService
         if ($decoded === false) {
             throw new RuntimeException('Format ' . $field . ' tidak valid.');
         }
+
         return $decoded;
     }
 }
